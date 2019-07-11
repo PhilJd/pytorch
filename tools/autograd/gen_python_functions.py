@@ -35,6 +35,7 @@ SKIP_PYTHON_BINDINGS = [
     'nonzero(_(out|numpy))?',
     'set_quantizer_',
     'set_data',
+    's_native_addmm_'
 ]
 
 # These function signatures are not exposed to Python. Note that this signature
@@ -49,6 +50,7 @@ SKIP_PYTHON_BINDINGS_SIGNATURES = [
 PY_VARIABLE_METHOD_VARARGS = CodeTemplate("""\
 static PyObject * ${pycname}(PyObject* self_, PyObject* args, PyObject* kwargs)
 {
+  ${deprecation_message}
   HANDLE_TH_ERRORS
   static PythonArgParser parser({
     ${signatures}
@@ -66,6 +68,7 @@ static PyObject * ${pycname}(PyObject* self_, PyObject* args, PyObject* kwargs)
 PY_VARIABLE_METHOD_NOARGS = CodeTemplate("""\
 static PyObject * ${pycname}(PyObject* self_, PyObject* args)
 {
+  ${deprecation_message}
   HANDLE_TH_ERRORS
   ${declare_namedtuple_return_types}
   ${unpack_self}
@@ -691,6 +694,7 @@ def create_python_bindings(python_functions, has_self, is_module=False):
             'unpack_self': [],
             'dispatch': [],
             'declare_namedtuple_return_types': '',
+            'deprecation_message': '',
         }
 
         if has_self:
@@ -701,6 +705,17 @@ def create_python_bindings(python_functions, has_self, is_module=False):
         for declaration in declarations:
             typedef, next_index = emit_namedtuple_return_type_def(declaration, next_index)
             env['declare_namedtuple_return_types'] += typedef
+
+        # In-place operator, should be method only. Deprecate it.
+        if not is_module and not has_self and name.endswith('_') and not name.startswith('_'):
+            # After the deprecated functions are removed, replace this block with an AssertionError to ensure that
+            # future in-place operators won't be exposed as functions.
+            env['deprecation_message'] = ('PyErr_WarnEx(PyExc_DeprecationWarning, '
+                                          '"In-place functions such as torch.{name} are deprecated '
+                                          'and will be removed in the next release. '
+                                          'Please use their in-place method counterparts (Tensor.{name}) instead.", 1);'
+                                          ).format(name=name)
+            env['deprecated'] = True
 
         # emit dispatch
         grouped = group_declarations(declarations)
